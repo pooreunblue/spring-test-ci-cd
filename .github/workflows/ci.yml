@@ -1,131 +1,76 @@
-# main 브랜치 푸시/PR 시 동작하는 CI 워크플로우
-# Continuous Integration : 지속적 통합
-name: CI
+name: Continuous Integration & Package
 
-# 어떤 조건에서 트리거 될 것인가?
 on:
-  # 푸시 되면
   push:
-    # main 브랜치에서
-    branches:
-      - main # main 브랜치 푸시만 감지
-  # PR이 열리거나 갱신되면
+    branches: [ "main" ]
   pull_request:
-    # main 브랜치를 대상으로 하는 PR에서
-    branches:
-      - main # main 대상 PR만 감지
+    branches: [ "main" ]
 
-# 어떤 작업들을 할 것인가?
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
 jobs:
-  # 문서/워크플로우만 바뀌었는지 판별하는 작업
-  changes:
-    runs-on: ubuntu-latest # 우분투 환경에서 실행
-    outputs:
-      code: ${{ steps.filter.outputs.code }} # 실제 코드 변경 여부
-    steps:
-      - name: Checkout source code
-        uses: actions/checkout@v7 # 변경 파일 비교용 이력 가져오기
-
-      # 빌드 대상 파일 변경 여부만 감지
-      - name: Detect buildable file changes
-        id: filter
-        uses: dorny/paths-filter@v3 # PR/푸시 변경 경로 필터링 액션
-        with:
-          filters: |
-            code:
-              - 'src/**'
-              - 'build.gradle'
-              - 'settings.gradle'
-              - 'Dockerfile'
-              - 'gradle/**'
-              - 'gradlew'
-              - 'gradlew.bat'
-
-  # 작업 이름
-  hello:
-    # 작업별로 환경변수나 다른 설정...
-    # linux나 macos 같은 os를 지정
-    runs-on: ubuntu-latest # 우분투 환경에서 실행
-    # 작업의 단계를 나눔
-    steps:
-      # 작업의 이름
-      - name: Print hello message
-        # run: 직접 명령어를 통해서 실행
-        run: echo "hello ci!" # 인사 메시지 출력
-        # action : 이미 정의된 다른 작업에 설정값이나 매개변수를 제공해서 실행
-
-  # gradle test 통과 여부를 검증하는 작업
   test:
-    # hello 작업과 독립적으로 병렬 실행됨
-    runs-on: ubuntu-latest # 우분투 환경에서 실행
+    name: Run Unit & Slice Tests
+    runs-on: ubuntu-latest
     steps:
-      # 러너는 매번 새로 생성되어 코드가 없음
-      - name: Checkout source code
-        # v7 : pwn request 방지 등 보안 강화 버전
-        uses: actions/checkout@v7 # 커밋 시점 소스 코드 가져오기
+      - name: Checkout repository
+        uses: actions/checkout@v6
 
-      # 러너 기본 이미지엔 JDK 미설치 상태
       - name: Set up JDK 17
-        # v6 : ESM 전환, 최신 배포판 지원 버전
         uses: actions/setup-java@v6
         with:
-          java-version: '17' # 프로젝트와 동일한 JDK 버전
-          distribution: 'temurin' # Adoptium Temurin 배포판
+          java-version: '17'
+          distribution: 'temurin'
+          cache: 'gradle'
 
-      # 저장소 내 스크립트는 실행 권한이 유실됨
       - name: Grant execute permission for gradlew
-        run: chmod +x ./gradlew # gradlew 실행 권한 재부여
+        run: chmod +x gradlew
 
-      # 실패 시 종료 코드가 0이 아니어서 잡 실패 처리됨
-      - name: Run Gradle tests
-        run: ./gradlew test # 전체 테스트 실행 및 통과 검증
+      - name: Run tests with Gradle Wrapper
+        run: ./gradlew test
 
-      # 테스트 실패해도 보고서는 남겨야 원인 파악 가능
-      - name: Upload test HTML report
-        if: always() # 성공/실패 상관없이 항상 업로드
-        # v7 : 압축 방식 개선된 최신 업로드 액션
+      - name: Upload test results
+        if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: test-report # Actions 탭에서 표시될 이름
-          path: build/reports/tests/test # gradle test HTML 보고서 경로
+          name: gradle-test-reports
+          path: build/reports/tests/test/
 
-  # 테스트 통과한 커밋만 이미지로 빌드/배포
-  build:
-    needs: [test, changes] # test 성공 + 변경 감지 완료 후 시작됨
-    # PR이거나 문서/워크플로우만 바뀐 경우 빌드 생략
-    if: github.event_name == 'push' && needs.changes.outputs.code == 'true'
-    runs-on: ubuntu-latest # 우분투 환경에서 실행
-    # 패키지 write 권한 없으면 ghcr push 거부됨
+  docker-build-push:
+    name: Build & Push Docker Image to GHCR
+    needs: test
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04-arm
     permissions:
-      contents: read # 소스 코드 읽기 권한
-      packages: write # ghcr 이미지 업로드 권한
+      contents: read
+      packages: write
     steps:
-      # 러너는 매번 새로 생성되어 코드가 없음
-      - name: Checkout source code
-        uses: actions/checkout@v7 # 커밋 시점 소스 코드 가져오기
-
-      # buildx 없이는 멀티 아키텍처 빌드 불가
-      - name: Set up QEMU for cross-platform build
-        uses: docker/setup-qemu-action@v4 # arm64 등 타 아키텍처 에뮬레이션
+      - name: Checkout repository
+        uses: actions/checkout@v6
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v4 # 멀티 플랫폼 빌드 빌더 생성
+        uses: docker/setup-buildx-action@v4
 
-      # GITHUB_TOKEN은 워크플로우마다 자동 발급되는 내장 시크릿
       - name: Log in to GitHub Container Registry
         uses: docker/login-action@v4
         with:
-          registry: ghcr.io # 깃허브 컨테이너 레지스트리 주소
-          username: ${{ github.actor }} # 푸시를 트리거한 계정
-          password: ${{ secrets.GITHUB_TOKEN }} # 별도 발급 없이 사용 가능
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
-      # 커밋 추적용 sha 태그와 최신본 latest 태그 병기
-      - name: Build and push multi-arch image
+      - name: Lowercase image name
+        run: echo "IMAGE_NAME=${IMAGE_NAME,,}" >> $GITHUB_ENV
+
+      - name: Build and push Docker image
         uses: docker/build-push-action@v7
         with:
-          context: . # Dockerfile이 위치한 루트 경로
-          platforms: linux/amd64,linux/arm64 # amd/arm 동시 빌드
-          push: true # 빌드 후 레지스트리에 업로드
+          context: .
+          push: true
+          platforms: linux/arm64
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
           tags: |
-            ghcr.io/${{ github.repository }}:${{ github.sha }}
-            ghcr.io/${{ github.repository }}:latest
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
