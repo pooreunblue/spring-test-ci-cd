@@ -1,0 +1,1 @@
+proxy_pass http://app-blue:8080;
