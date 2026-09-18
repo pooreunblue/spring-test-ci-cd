@@ -19,7 +19,7 @@ services:
 
   app-blue:
     # 이건 활용하셔도 되는데... 문제가 그러면은 여러분들게 아니라 제걸 쓰게됨
-    image: ghcr.io/a1l1ke/260918_ci-cd:latest
+    image: ghcr.io/pooreunblue/spring-test-ci-cd:latest
     container_name: app-blue
     restart: on-failure
     ports:
@@ -33,7 +33,7 @@ services:
 
   app-green:
     # 이건 활용하셔도 되는데... 문제가 그러면은 여러분들게 아니라 제걸 쓰게됨
-    image: ghcr.io/a1l1ke/260918_ci-cd:latest
+    image: ghcr.io/pooreunblue/spring-test-ci-cd:latest
     container_name: app-green
     restart: on-failure
     ports:
